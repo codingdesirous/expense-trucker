@@ -1,71 +1,82 @@
 const express = require('express');
-const app = express();
 const mysql = require('mysql2');
+const bcrypt = require('bcryptjs');
+const session = require('express-session');
+const bodyParser = require('body-parser');
 const cors = require('cors');
-const bcrypt = require('bcrypt');
 const dotenv = require('dotenv');
 const path = require('path');
+const app = express();
 
-//server static files
-app.use(express.static('api'));
+// Serve static files from the project root
+app.use(express.static(path.join(__dirname, '../')))
 
-
-//midlewares
-app.use(express.json());
-app.use(cors());
+// Load environment variables from .env file
 dotenv.config();
-// define routes
-app.get('/register',(request,response)=>{
-    response.sendFile(path.join(__dirname,'register.html'));
-});
 
-// connecting to database
+
+
+// Middleware
+app.use(express.json());  // For parsing JSON data
+app.use(cors());  // Enable CORS
+app.use(bodyParser.urlencoded({ extended: true }));  // Parse URL-encoded bodies
+app.use(bodyParser.json());  // Parse JSON bodies for forms
+
+// MySQL Database Connection
 const db = mysql.createConnection({
     host: process.env.DB_HOST,
-    user:process.env.DB_USER,
-    password:process.env.DB_PASSWORD
-  
-
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME ,
 });
 
-//test connection
-db.connect((err)=> {
-if(err) {
-        return console.log("Error connecting to MYSQL");
-}
-        // if connection works
-console.log("connected to MYSQL as id:",db.threadId);
+db.connect((err) => {
+    if (err) throw err;
+    console.log('Connected to MySQL Database');
 });
-    // create database
-    db.query('CREATE DATABASE IF NOT EXISTS expense_trucker',(err,result)=>{
-        if(err){
+
+
+
+// create database
+db.query('CREATE DATABASE IF NOT EXISTS expense_trucker',(err,result)=>{
+    if(err){
+         return console.log(err);
+    }
+        console.log("Database expense_trucker created/checked");
+     // Use the newly created database
+     db.changeUser({ database: 'expense_trucker' }, (err) => {
+        if (err) {
+            return console.log("Error changing database:", err);
+        }
+    
+    // create user tables
+    const createUsersTable= `CREATE TABLE IF NOT EXISTS users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    email VARCHAR(50)NOT NULL,
+    password VARCHAR(255))`;
+    db.query(createUsersTable,(err,result)=>{
+        if (err){
              return console.log(err);
         }
-            console.log("Database expense_trucker created/checked");
-         // Use the newly created database
-         db.changeUser({ database: 'expense_trucker' }, (err) => {
-            if (err) {
-                return console.log("Error changing database:", err);
-            }
-        
-        // create user tables
-        const createUsersTable= `CREATE TABLE IF NOT EXISTS users (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        email VARCHAR(50)NOT NULL,
-        password VARCHAR(255))`;
-        db.query(createUsersTable,(err,result)=>{
-            if (err){
-                 return console.log(err);
-            }
 
-                console.log("users table checked/created");
+            console.log("users table checked/created");
 
 
-        })
+    })
 
 
-    });
 });
+});
+
+
+app.use(session({
+    secret: process.env.SESSION_SECRET || 'yourSecretKey',
+    resave: false,
+    saveUninitialized: true,
+    cookie: { secure: false }  // Set to true if using HTTPS
+}));
+
+
 
 //user registeration route
 app.post('/api/register',async(req,res)=>{
@@ -97,25 +108,101 @@ app.post('/api/register',async(req,res)=>{
         }
     
 })
-// user login route
-app.post('/api/login',async(req,res)=>{
-    try{
-        const users = `SELECT*FROM users WHERE email = ?`
-        db.query(users,[req.body.email],(err,date) =>{
-            if(date.length ===0) return res.status(404).json("user not found")
-                // check if pasword is valid
-            const isPasswordValid = bcrypt.compareSync(req.body.password, data[0].password)
-            if(!isPasswordValid) return res.status(400).jadon('Invalidemail or password')
-               return res.status(200).json("Login successful") 
 
-        })
+
+
+
+
+
+
+
+// Login User
+app.post('/login', (req, res) => {
+    const { username, password } = req.body;
+
+    const sql = 'SELECT * FROM users WHERE username = ?';
+    db.query(sql, [username], (err, results) => {
+        if (err) throw err;
+
+        if (results.length > 0) {
+            const user = results[0];
+
+            bcrypt.compare(password, user.password, (err, isMatch) => {
+                if (err) throw err;
+
+                if (isMatch) {
+                    req.session.user = user;
+                    res.send('Logged in successfully!');
+                } else {
+                    res.status(401).send('Invalid credentials');
+                }
+            });
+        } else {
+            res.status(401).send('User not found');
+        }
+    });
+});
+
+
+
+// Add Expense
+app.post('/add_expense', (req, res) => {
+    if (!req.session.user) {
+        return res.status(401).send('Please login to add expenses');
     }
-    catch(err) {
-        res.status(500).json("Internal server error")
+
+    const { date, category, amount, description } = req.body;
+    const userId = req.session.user.id;
+
+    const sql = 'INSERT INTO expenses (user_id, date, category, amount, description) VALUES (?, ?, ?, ?, ?)';
+    db.query(sql, [userId, date, category, amount, description], (err, result) => {
+        if (err) throw err;
+        res.send('Expense added successfully!');
+    });
+});
+
+
+
+// Edit Expense
+app.post('/edit_expense', (req, res) => {
+    if (!req.session.user) {
+        return res.status(401).send('Please login to edit expenses');
     }
-})
- 
-// start server
-app.listen(4000,()=> {
-    console.log("server is running on port 4000");
+
+    const { expense_id, date, category, amount, description } = req.body;
+
+    const sql = 'UPDATE expenses SET date = ?, category = ?, amount = ?, description = ? WHERE id = ? AND user_id = ?';
+    db.query(sql, [date, category, amount, description, expense_id, req.session.user.id], (err, result) => {
+        if (err) throw err;
+        res.send('Expense updated successfully!');
+    });
+});
+
+
+
+// View Expenses
+app.get('/view_expenses', (req, res) => {
+    if (!req.session.user) {
+        return res.status(401).send('Please login to view expenses');
+    }
+
+    const sql = 'SELECT * FROM expenses WHERE user_id = ?';
+    db.query(sql, [req.session.user.id], (err, results) => {
+        if (err) throw err;
+        res.json(results);
+    });
+});
+
+
+
+// Logout
+app.get('/logout', (req, res) => {
+    req.session.destroy((err) => {
+        if (err) throw err;
+        res.send('Logged out successfully!');
+    });
+});
+
+app.listen(4000, () => {
+    console.log(`Server running on port ${4000}`);
 });
