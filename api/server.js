@@ -4,9 +4,11 @@ const bcrypt = require('bcryptjs');
 const session = require('express-session');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const jwt = require('jsonwebtoken')
 const dotenv = require('dotenv');
 const path = require('path');
 const app = express();
+
 
 // Serve static files from the project root
 app.use(express.static(path.join(__dirname, '../')))
@@ -50,9 +52,20 @@ db.query('CREATE DATABASE IF NOT EXISTS expense_trucker',(err,result)=>{
         }
     
     // create user tables
+    // const dropUsersTable= `DROP TABLE  users`;
+    //     db.query(dropUsersTable,(err,result)=>{
+    //         if (err){
+    //              return console.log(err);
+    //         }
+    
+    //             console.log("users table dropped");
+    
+    
+    //     });
     const createUsersTable= `CREATE TABLE IF NOT EXISTS users (
     id INT AUTO_INCREMENT PRIMARY KEY,
     email VARCHAR(50)NOT NULL,
+    username VARCHAR(55),
     password VARCHAR(255))`;
     db.query(createUsersTable,(err,result)=>{
         if (err){
@@ -62,7 +75,7 @@ db.query('CREATE DATABASE IF NOT EXISTS expense_trucker',(err,result)=>{
             console.log("users table checked/created");
 
 
-    })
+    });
 
 
 });
@@ -90,7 +103,7 @@ app.post('/api/register',async(req,res)=>{
             const salt = bcrypt.genSaltSync(10)
             const hashedPassword = bcrypt.hashSync(req.body.password, salt)
 
-            const createUser = `INSERT INTO users(email,username,password) VALUES (?)`
+            const createUser = `INSERT INTO users(email,username,password) VALUES (?, ?, ?)`
             value = [
                 req.body.email,
                 req.body.username,
@@ -104,7 +117,7 @@ app.post('/api/register',async(req,res)=>{
         })
     }
     catch(err){
-            res.status(500).json("Internal Server error")
+            res.status(500).json("Internal Server error: " + err)
         }
     
 })
@@ -117,7 +130,7 @@ app.post('/api/register',async(req,res)=>{
 
 
 // Login User
-app.post('/login', (req, res) => {
+app.post('/api/login', (req, res) => {
     const { username, password } = req.body;
 
     const sql = 'SELECT * FROM users WHERE username = ?';
